@@ -2,4 +2,9 @@
 # Ce fichier .gitignore a été automatiquement créé par Microsoft(R) Visual Studio.
 ################################################################################
 
-/.vs/slnx.sqlite
+# Fichiers de cache Visual Studio
+.vs/
+*.db
+*.db-shm
+*.db-wal
+*.slnx/FileContentIndex/
