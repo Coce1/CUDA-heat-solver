@@ -73,21 +73,19 @@ The project is modular and strictly separates declarations (Headers), implementa
 │   └── heat_gpu_ellpack.cu    # CUDA ELLPACK Format Implementation
 └── Makefile                   # Build automation
 ```
-## 4. Prerequisites and Execution
+## 4. Prerequisites
 
-Prerequisites
-To compile and run this project, your environment must meet the following requirements:
+* To compile and run this project, your environment must meet the following requirements:
+* An NVIDIA GPU with CUDA architecture support.
+* CUDA Toolkit installed (providing the nvcc compiler).
+* A C++ compiler supporting the C++14 standard minimum (e.g., g++ or clang).
 
-An NVIDIA GPU with CUDA architecture support.
+## Build and Execute.
 
-CUDA Toolkit installed (providing the nvcc compiler).
-
-A C++ compiler supporting the C++14 standard minimum (e.g., g++ or clang).
-
-make build automation tool installed on your system.
-
+```bash
 # Clean previous builds and compile the project with maximum optimization (-O3)
 make rebuild
 
 # Run the simulation and display the execution times
 ./bin/heat_solver
+```
