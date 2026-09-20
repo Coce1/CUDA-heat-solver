@@ -9,10 +9,8 @@ void solveHeatCPU(int num_points, const int* row_ptr, const int* col_idx,
     // Calcul de la constante thermique
     float cx = (alpha * dt) / (dx * dx);
 
-    // Boucle temporelle (Time-stepping loop)
     for (int t = 0; t < steps; ++t) {
 
-        // --- Équivalent du Kernel : Calcul spatial pour ce pas de temps ---
         for (int row = 0; row < num_points; ++row) {
             float dot_product = 0.0f;
 
@@ -25,7 +23,6 @@ void solveHeatCPU(int num_points, const int* row_ptr, const int* col_idx,
 
             u_tmp[row] = u[row] + cx * dot_product;
         }
-        // ------------------------------------------------------------------
 
         // Échange des pointeurs (Double Buffering)
         float* temp = u;
