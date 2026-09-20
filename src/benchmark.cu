@@ -152,8 +152,8 @@ int main() {
     
     // On appelle ta fonction exactement avec les paramètres imposés par ton .cuh
     // Note : on passe 'num_points' à la place de 'nx' pour être sûr de traiter toute la plaque 2D
-    solveHeatGPUNaive(d_u, d_u_tmp, num_points, alpha, dx, dt, steps);
-                            
+    solveHeatGPUNaive(num_points, d_row_ptr, d_col_idx, d_val, d_u, d_u_tmp, alpha, dx, dt, steps);
+
     double ms_naive = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - gpu_naive_start).count() * 1000.0;
     std::cout << "- Temps: " << ms_naive << " ms" << std::endl;
 
