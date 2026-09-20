@@ -65,13 +65,47 @@ void generate2DLaplacianCSR(int nx, int ny,
     row_ptr[num_points] = nnz; 
 }
 
-#include <iostream>
-#include <vector>
-#include <chrono>
-#include <cuda_runtime.h>
+void generate2DLaplacianELLPACK(int nx, int ny, int max_nnz, 
+                                std::vector<int>& col_idx, 
+                                std::vector<float>& val) {
+    int num_points = nx * ny;
+    
+    // Allocation avec la taille exacte : num_points * max_nnz
+    col_idx.assign(num_points * max_nnz, 0); 
+    val.assign(num_points * max_nnz, 0.0f);  
 
-// Inclusion de ton fichier d'en-tête contenant les signatures des wrappers
-#include "../include/heat_solver.cuh"
+    for (int y = 0; y < ny; ++y) {
+        for (int x = 0; x < nx; ++x) {
+            int row = y * nx + x;
+            
+            if (x > 0 && x < nx - 1 && y > 0 && y < ny - 1) {
+                // Remplissage Column-Major : L'indice est (n * num_points + row)
+                
+                val[0 * num_points + row] = 1.0f;                     // 1. Haut
+                col_idx[0 * num_points + row] = (y - 1) * nx + x;
+                
+                val[1 * num_points + row] = 1.0f;                     // 2. Gauche
+                col_idx[1 * num_points + row] = y * nx + (x - 1);
+                
+                val[2 * num_points + row] = -4.0f;                    // 3. Centre
+                col_idx[2 * num_points + row] = row;
+                
+                val[3 * num_points + row] = 1.0f;                     // 4. Droite
+                col_idx[3 * num_points + row] = y * nx + (x + 1);
+                
+                val[4 * num_points + row] = 1.0f;                     // 5. Bas
+                col_idx[4 * num_points + row] = (y + 1) * nx + x;
+            } else {
+                // Points de Dirichlet (Bords) : 0 transfert thermique
+                // On les fait pointer vers eux-mêmes avec un poids de 0 pour éviter les erreurs d'indice
+                for(int n = 0; n < max_nnz; ++n) {
+                    col_idx[n * num_points + row] = row;
+                    val[n * num_points + row] = 0.0f;
+                }
+            }
+        }
+    }
+}
 
 int main() {
     // ---------------------------------------------------------
@@ -171,6 +205,32 @@ int main() {
     double ms_shared = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - gpu_shared_start).count() * 1000.0;
     std::cout << "-> Temps GPU Optimisé : " << ms_shared << " ms" << std::endl;
 
+    int max_nnz = 5; // 5 voisins maximum pour un Laplacien 2D classique
+    std::vector<int> h_col_idx_ell(num_points * max_nnz);
+    std::vector<float> h_val_ell(num_points * max_nnz);
+    
+    generate2DLaplacianELLPACK(nx, ny, max_nnz, h_col_idx_ell, h_val_ell);
+
+    int *d_col_idx_ell; float *d_val_ell;
+    cudaMalloc(&d_col_idx_ell, num_points * max_nnz * sizeof(int));
+    cudaMalloc(&d_val_ell, num_points * max_nnz * sizeof(float));
+    cudaMemcpy(d_col_idx_ell, h_col_idx_ell.data(), num_points * max_nnz * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_val_ell, h_val_ell.data(), num_points * max_nnz * sizeof(float), cudaMemcpyHostToDevice);
+
+    // --- BENCHMARK GPU ELLPACK ---
+    std::cout << "\n[GPU] Lancement Optimisé (Format ELLPACK Coalescé)..." << std::endl;
+    // Réinitialisation des températures
+    cudaMemcpy(d_u, h_u.data(), num_points * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_tmp, h_u_tmp.data(), num_points * sizeof(float), cudaMemcpyHostToDevice);
+    
+    auto gpu_ellpack_start = std::chrono::high_resolution_clock::now();
+    
+    solveHeatGPUELLPACK(num_points, max_nnz, d_col_idx_ell, d_val_ell, 
+                        d_u, d_u_tmp, alpha, dx, dt, steps);
+                        
+    double ms_ellpack = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - gpu_ellpack_start).count() * 1000.0;
+    std::cout << "-> Temps GPU ELLPACK : " << ms_ellpack << " ms" << std::endl;
+
     // ---------------------------------------------------------
     // NETTOYAGE DE LA MÉMOIRE GPU
     // ---------------------------------------------------------
@@ -179,6 +239,8 @@ int main() {
     cudaFree(d_val); 
     cudaFree(d_u); 
     cudaFree(d_u_tmp);
+    cudaFree(d_col_idx_ell);
+    cudaFree(d_val_ell);
 
     std::cout << "\nBenchmark terminé avec succès." << std::endl;
     return 0;

@@ -16,4 +16,10 @@ void solveHeatGPUSharedMatrix(int num_points, const int* d_row_ptr, const int* d
                               const float* d_val, float* d_u, float* d_u_tmp, 
                               float alpha, float dx, float dt, int steps);
 
+// GPU implementation - ELLPACK
+void solveHeatGPUELLPACK(int num_points, int max_nnz, 
+                         const int* d_col_idx, const float* d_val, 
+                         float* d_u, float* d_u_tmp, 
+                         float alpha, float dx, float dt, int steps);
+
 #endif 
