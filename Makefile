@@ -14,7 +14,7 @@ BIN_DIR = bin
 TARGET = $(BIN_DIR)/heat_solver
 
 # Fichiers sources basés sur ton arborescence
-SRCS_CU = $(SRC_DIR)/benchmark.cu $(SRC_DIR)/heat_gpu_naive.cu $(SRC_DIR)/heat_gpu_shared.cu
+SRCS_CU = $(SRC_DIR)/benchmark.cu $(SRC_DIR)/heat_gpu_naive.cu $(SRC_DIR)/heat_gpu_shared.cu $(SRC_DIR)/heat_gpu_ellpack.cu
 SRCS_CPP = $(SRC_DIR)/heat_cpu.cpp
 
 # Fichiers objets correspondants
