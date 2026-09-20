@@ -5,7 +5,7 @@
 #define BLOCK_DIM_X 16
 #define BLOCK_DIM_Y 16
 
-__global__ void heatMatrixSharedKernel(const int* row_ptr, const int* col_idx, const float* val, 
+__global__ void heatShared(const int* row_ptr, const int* col_idx, const float* val, 
                                        const float* u_n, float* u_next, float cx) {
     
     // NOUVELLE LOGIQUE : 1 Bloc de threads s'occupe d'UNE SEULE ligne entière
@@ -46,20 +46,34 @@ __global__ void heatMatrixSharedKernel(const int* row_ptr, const int* col_idx, c
 
 
 // Fonction de lancement côté Host
-void solveHeatGPUShared(float* d_u, float* d_u_tmp, int nx, int ny, 
-                          float alpha, float dx, float dt, int steps) {
+void solveHeatGPUSharedMatrix(int num_points, const int* d_row_ptr, const int* d_col_idx, 
+                              const float* d_val, float* d_u, float* d_u_tmp, 
+                              float alpha, float dx, float dt, int steps) {
+    
+    // Calcul de la constante thermique
     float cx = (alpha * dt) / (dx * dx);
 
-    dim3 threadsPerBlock(BLOCK_DIM_X, BLOCK_DIM_Y);
-    dim3 numBlocks((nx + BLOCK_DIM_X - 1) / BLOCK_DIM_X, 
-                   (ny + BLOCK_DIM_Y - 1) / BLOCK_DIM_Y);
+    // Configuration d'exécution : 1 BLOC par point physique (par ligne de la matrice)
+    int threadsPerBlock = 32; // Une équipe de 32 threads (un Warp)
+    int numBlocks = num_points; 
+    
+    // Allocation dynamique du cache partagé (32 floats par bloc)
+    size_t shared_mem_size = threadsPerBlock * sizeof(float);
 
+    // Boucle temporelle sur le Host (CPU)
     for (int t = 0; t < steps; ++t) {
-        heatShared2DKernel<<<numBlocks, threadsPerBlock>>>(d_u, d_u_tmp, nx, ny, cx);
         
+        // Lancement du kernel avec le 3ème argument d'exécution (shared memory)
+        heatShared<<<numBlocks, threadsPerBlock, shared_mem_size>>>(d_row_ptr, 
+                                                                                d_col_idx, d_val, 
+                                                                                d_u, d_u_tmp, cx);
+
+        // Échange des pointeurs (Double Buffering)
         float* temp = d_u;
         d_u = d_u_tmp;
         d_u_tmp = temp;
     }
+
+    // Attente de la fin de tous les pas de temps
     cudaDeviceSynchronize();
 }

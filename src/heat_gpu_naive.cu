@@ -2,9 +2,8 @@
 #include <cuda_runtime.h>
 #include <iostream>
 
-__global__ void heatNaive(int num_points, 
-                                      const int* row_ptr, const int* col_idx, const float* val, 
-                                      const float* u_n, float* u_next, float cx) {
+__global__ void heatNaive(int num_points,const int* row_ptr, const int* col_idx, const float* val, 
+                                         const float* u_n, float* u_next, float cx) {
     
     // Identifiant global du thread (1 thread = 1 ligne de la matrice = 1 point physique)
     int row = blockIdx.x * blockDim.x + threadIdx.x;
@@ -50,5 +49,34 @@ void solveHeatGPUNaive(float* d_u, float* d_u_tmp, int nx,
     }
     
     // Wait for the GPU to finish all time steps
+    cudaDeviceSynchronize();
+}
+
+void solveHeatGPUNaiveMatrix(int num_points, const int* d_row_ptr, const int* d_col_idx, 
+                             const float* d_val, float* d_u, float* d_u_tmp, 
+                             float alpha, float dx, float dt, int steps) {
+    
+    // Calcul de la constante thermique
+    float cx = (alpha * dt) / (dx * dx);
+
+    // Configuration d'exécution : 1 thread par point physique
+    int threadsPerBlock = 256;
+    int numBlocks = (num_points + threadsPerBlock - 1) / threadsPerBlock;
+
+    // Boucle temporelle sur le Host (CPU)
+    for (int t = 0; t < steps; ++t) {
+        
+        // Lancement du kernel
+        heatNaive<<<numBlocks, threadsPerBlock>>>(num_points, d_row_ptr, 
+                                                              d_col_idx, d_val, 
+                                                              d_u, d_u_tmp, cx);
+
+        // Échange des pointeurs (Double Buffering)
+        float* temp = d_u;
+        d_u = d_u_tmp;
+        d_u_tmp = temp;
+    }
+
+    // Attente de la fin de tous les pas de temps
     cudaDeviceSynchronize();
 }
