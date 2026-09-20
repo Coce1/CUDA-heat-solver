@@ -66,10 +66,8 @@ void solveHeatGPUNaiveMatrix(int num_points, const int* d_row_ptr, const int* d_
     // Boucle temporelle sur le Host (CPU)
     for (int t = 0; t < steps; ++t) {
         
-        // Lancement du kernel
-        heatNaive<<<numBlocks, threadsPerBlock>>>(num_points, d_row_ptr, 
-                                                              d_col_idx, d_val, 
-                                                              d_u, d_u_tmp, cx);
+        // Lancement du kernel avec les bons paramètres matriciels (CSR)
+        heatNaive<<<numBlocks, threadsPerBlock>>>(num_points, d_row_ptr, d_col_idx, d_val, d_u, d_u_tmp, cx);
 
         // Échange des pointeurs (Double Buffering)
         float* temp = d_u;
