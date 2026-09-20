@@ -151,7 +151,7 @@ int main() {
     
     auto gpu_naive_start = std::chrono::high_resolution_clock::now();
     
-    solveHeatGPUNaiveMatrix(num_points, d_row_ptr, d_col_idx, d_val, 
+    solveHeatGPUNaive(num_points, d_row_ptr, d_col_idx, d_val, 
                             d_u, d_u_tmp, alpha, dx, dt, steps);
                             
     double ms_naive = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - gpu_naive_start).count() * 1000.0;
