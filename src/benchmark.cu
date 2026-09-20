@@ -144,18 +144,18 @@ int main() {
     std::cout << "-> Temps CPU : " << ms_cpu << " ms" << std::endl;
 
     // --- BENCHMARK GPU NAÏF ---
-    std::cout << "\n[GPU] Lancement Naïf (Global Memory)..." << std::endl;
-    // On réinitialise la température sur le GPU avant de lancer le test
+    std::cout << "\n[GPU] Lancement Naïf (Version d'origine)..." << std::endl;
     cudaMemcpy(d_u, h_u.data(), num_points * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_u_tmp, h_u_tmp.data(), num_points * sizeof(float), cudaMemcpyHostToDevice);
     
     auto gpu_naive_start = std::chrono::high_resolution_clock::now();
     
-   solveHeatGPUNaive(num_points, d_row_ptr, d_col_idx, d_val, 
-                            d_u, d_u_tmp, alpha, dx, dt, steps);
+    // On appelle ta fonction exactement avec les paramètres imposés par ton .cuh
+    // Note : on passe 'num_points' à la place de 'nx' pour être sûr de traiter toute la plaque 2D
+    solveHeatGPUNaive(d_u, d_u_tmp, num_points, alpha, dx, dt, steps);
                             
     double ms_naive = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - gpu_naive_start).count() * 1000.0;
-    std::cout << "-> Temps GPU Naïf : " << ms_naive << " ms" << std::endl;
+    std::cout << "- Temps: " << ms_naive << " ms" << std::endl;
 
     // --- BENCHMARK GPU OPTIMISÉ ---
     std::cout << "\n[GPU] Lancement Optimisé (Shared Memory / Réduction)..." << std::endl;
