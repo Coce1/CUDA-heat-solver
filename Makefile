@@ -1,7 +1,7 @@
 # Compilateur CUDA
 NVCC = nvcc
 
-# Options de compilation (-O3 pour l'optimisation maximale des performances)
+# Options de compilation
 NVCC_FLAGS = -O3 -std=c++14 -I./include
 
 # Dossiers du projet
@@ -11,36 +11,43 @@ OBJ_DIR = obj
 BIN_DIR = bin
 
 # Nom de l'exécutable final
-TARGET = $(BIN_DIR)/heat_solver_spmv
+TARGET = $(BIN_DIR)/heat_solver
 
-# Liste des fichiers sources et objets
-SRCS = $(SRC_DIR)/heat_matrix_solver.cu $(SRC_DIR)/benchmark_matrix.cu
-OBJS = $(patsubst $(SRC_DIR)/%.cu, $(OBJ_DIR)/%.o, $(SRCS))
+# Fichiers sources basés sur ton arborescence
+SRCS_CU = $(SRC_DIR)/benchmark.cu $(SRC_DIR)/heat_gpu_naive.cu $(SRC_DIR)/heat_gpu_shared.cu
+SRCS_CPP = $(SRC_DIR)/heat_cpu.cpp
 
-# Règle par défaut (ce qui se lance quand on tape juste "make")
+# Fichiers objets correspondants
+OBJS_CU = $(patsubst $(SRC_DIR)/%.cu, $(OBJ_DIR)/%.o, $(SRCS_CU))
+OBJS_CPP = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SRCS_CPP))
+OBJS = $(OBJS_CU) $(OBJS_CPP)
+
+# Règle par défaut
 all: directories $(TARGET)
 
-# Règle pour créer les dossiers bin/ et obj/ s'ils n'existent pas
+# Création des dossiers
 directories:
 	@mkdir -p $(OBJ_DIR)
 	@mkdir -p $(BIN_DIR)
 
-# Règle d'édition de liens (création de l'exécutable à partir des objets)
+# Édition de liens (Création de l'exécutable)
 $(TARGET): $(OBJS)
 	$(NVCC) $(NVCC_FLAGS) -o $@ $^
 	@echo "Compilation réussie ! L'exécutable est dans $(TARGET)"
 
-# Règle de compilation (création des objets à partir des sources)
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cu $(INC_DIR)/heat_matrix_solver.cuh
+# Règles de compilation pour les fichiers .cu
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cu
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
-# Règle de nettoyage (supprime les dossiers générés)
+# Règles de compilation pour les fichiers .cpp
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
+
+# Nettoyage
 clean:
 	rm -rf $(OBJ_DIR) $(BIN_DIR)
 	@echo "Fichiers objets et exécutable supprimés."
 
-# Règle pour tout recompiler de zéro
 rebuild: clean all
 
-# Indique à Make que ces mots ne sont pas des noms de fichiers
 .PHONY: all directories clean rebuild
