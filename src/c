@@ -1,0 +1,60 @@
+#include <vector>
+
+void generate2DLaplacianCSR(int nx, int ny, 
+                            std::vector<int>& row_ptr, 
+                            std::vector<int>& col_idx, 
+                            std::vector<float>& val) {
+    
+    int num_points = nx * ny;
+    row_ptr.resize(num_points + 1, 0);
+
+    // Réservation de la mémoire pour éviter les réallocations coûteuses (5 connexions max par point)
+    col_idx.reserve(num_points * 5);
+    val.reserve(num_points * 5);
+
+    int nnz = 0; // Compteur de valeurs non nulles (Number of Non-Zeros)
+
+    for (int y = 0; y < ny; ++y) {
+        for (int x = 0; x < nx; ++x) {
+            int row = y * nx + x;
+            
+            // Enregistrement de l'index de départ pour cette ligne
+            row_ptr[row] = nnz;
+
+            // On applique le Laplacien uniquement à l'intérieur de la plaque
+            if (x > 0 && x < nx - 1 && y > 0 && y < ny - 1) {
+                
+                // 1. Voisin du Haut (Index le plus petit, inséré en premier)
+                val.push_back(1.0f);
+                col_idx.push_back((y - 1) * nx + x);
+                nnz++;
+
+                // 2. Voisin de Gauche
+                val.push_back(1.0f);
+                col_idx.push_back(y * nx + (x - 1));
+                nnz++;
+
+                // 3. Centre (Diagonale principale)
+                val.push_back(-4.0f);
+                col_idx.push_back(row);
+                nnz++;
+
+                // 4. Voisin de Droite
+                val.push_back(1.0f);
+                col_idx.push_back(y * nx + (x + 1));
+                nnz++;
+
+                // 5. Voisin du Bas (Index le plus grand)
+                val.push_back(1.0f);
+                col_idx.push_back((y + 1) * nx + x);
+                nnz++;
+            }
+            // Les points sur les bords externes ne rentrent pas dans la condition if.
+            // Ils n'auront aucun voisin enregistré. Leur produit scalaire fera donc 0.
+            // Équation : U_futur = U_actuel + cx * 0 -> Leur température restera constante.
+        }
+    }
+    
+    // Clôture du tableau row_ptr avec le nombre total d'éléments non nuls
+    row_ptr[num_points] = nnz; 
+}

@@ -2,28 +2,30 @@
 #include <cuda_runtime.h>
 #include <iostream>
 
-__global__ void heatNaive(const float* d_u, float* d_u_tmp, 
-                                  int nx, int ny, float cx) {
+__global__ void heatNaive(int num_points, 
+                                      const int* row_ptr, const int* col_idx, const float* val, 
+                                      const float* u_n, float* u_next, float cx) {
     
-    // 1. Calcul des coordonnées 2D du thread dans la grille
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    // Identifiant global du thread (1 thread = 1 ligne de la matrice = 1 point physique)
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-    // 2. Vérification des limites : On ne calcule que l'intérieur de la plaque
-    if (x > 0 && x < nx - 1 && y > 0 && y < ny - 1) {
+    if (row < num_points) {
+        float dot_product = 0.0f;
         
-        // 3. Conversion de la coordonnée 2D (x,y) en index 1D linéaire
-        int center = y * nx + x;
-        
-        int top    = (y - 1) * nx + x;
-        int bottom = (y + 1) * nx + x;
-        int left   = y * nx + (x - 1);
-        int right  = y * nx + (x + 1);
+        // On récupère le début et la fin de la ligne dans les vecteurs compressés
+        int row_start = row_ptr[row];
+        int row_end   = row_ptr[row + 1];
 
-        // 4. Stencil 2D à 5 points
-        d_u_tmp[center] = d_u[center] + cx * (d_u[top] + d_u[bottom] + 
-                                              d_u[left] + d_u[right] - 
-                                              4.0f * d_u[center]);
+        // Multiplication uniquement avec les voisins existants (les non-zéros)
+        for (int i = row_start; i < row_end; ++i) {
+            float matrix_val = val[i];             // Ex: -4.0 ou 1.0
+            float neighbor_temp = u_n[col_idx[i]]; // Température du voisin
+            
+            dot_product += matrix_val * neighbor_temp;
+        }
+
+        // Application de l'équation : U^{n+1} = U^n + cx * (L * U^n)
+        u_next[row] = u_n[row] + cx * dot_product;
     }
 }
 

@@ -5,59 +5,48 @@
 #define BLOCK_DIM_X 16
 #define BLOCK_DIM_Y 16
 
-__global__ void heatShared(const float* d_u, float* d_u_tmp, 
-                                   int nx, int ny, float cx) {
+__global__ void heatMatrixSharedKernel(const int* row_ptr, const int* col_idx, const float* val, 
+                                       const float* u_n, float* u_next, float cx) {
     
-    // Allocation de la mémoire partagée avec la bordure (Halo)
-    __shared__ float s_u[BLOCK_DIM_Y + 2][BLOCK_DIM_X + 2];
+    // NOUVELLE LOGIQUE : 1 Bloc de threads s'occupe d'UNE SEULE ligne entière
+    int row = blockIdx.x; 
+    int tid = threadIdx.x;
 
-    // Identifiants locaux dans le bloc
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
+    // Allocation de la mémoire partagée pour la réduction
+    extern __shared__ float s_partial_sums[];
 
-    // Identifiants globaux dans la grille 2D
-    int x = blockIdx.x * blockDim.x + tx;
-    int y = blockIdx.y * blockDim.y + ty;
+    float local_sum = 0.0f;
+    int row_start = row_ptr[row];
+    int row_end   = row_ptr[row + 1];
 
-    // Coordonnées décalées dans la mémoire partagée (pour laisser la place au halo)
-    int sx = tx + 1;
-    int sy = ty + 1;
-
-    // Index linéaire 1D pour la mémoire globale
-    int global_idx = y * nx + x;
-
-    // 1. Chargement de la tuile centrale
-    if (x < nx && y < ny) {
-        s_u[sy][sx] = d_u[global_idx];
-        
-        // 2. Chargement collaboratif des Halos par les threads situés sur les bords du bloc
-        if (tx == 0 && x > 0) 
-            s_u[sy][0] = d_u[global_idx - 1]; // Halo Gauche
-            
-        if (tx == BLOCK_DIM_X - 1 && x < nx - 1) 
-            s_u[sy][BLOCK_DIM_X + 1] = d_u[global_idx + 1]; // Halo Droit
-            
-        if (ty == 0 && y > 0) 
-            s_u[0][sx] = d_u[global_idx - nx]; // Halo Haut
-            
-        if (ty == BLOCK_DIM_Y - 1 && y < ny - 1) 
-            s_u[BLOCK_DIM_Y + 1][sx] = d_u[global_idx + nx]; // Halo Bas
+    // 1. Les threads du bloc se partagent le travail de la ligne
+    // Si la ligne a 5 éléments et le bloc a 32 threads, seuls les 5 premiers travaillent.
+    for (int i = row_start + tid; i < row_end; i += blockDim.x) {
+        local_sum += val[i] * u_n[col_idx[i]];
     }
-
-    // Synchronisation obligatoire pour s'assurer que toute la tuile et le halo sont chargés
+    
+    // Dépôt dans le cache partagé
+    s_partial_sums[tid] = local_sum;
     __syncthreads();
 
-    // 3. Calcul du Stencil 2D à 5 points uniquement pour l'intérieur de la plaque
-    if (x > 0 && x < nx - 1 && y > 0 && y < ny - 1) {
-        d_u_tmp[global_idx] = s_u[sy][sx] + cx * (
-                              s_u[sy - 1][sx] + s_u[sy + 1][sx] + // Haut et Bas
-                              s_u[sy][sx - 1] + s_u[sy][sx + 1] - // Gauche et Droite
-                              4.0f * s_u[sy][sx]);                // Centre
+    // 2. Arbre de réduction en mémoire partagée (Évite les conflits de banque)
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            s_partial_sums[tid] += s_partial_sums[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    // 3. Le premier thread (le chef d'équipe) écrit le résultat physique final
+    if (tid == 0) {
+        u_next[row] = u_n[row] + cx * s_partial_sums[0];
     }
 }
 
+
+
 // Fonction de lancement côté Host
-void solveHeatGPUShared2D(float* d_u, float* d_u_tmp, int nx, int ny, 
+void solveHeatGPUShared(float* d_u, float* d_u_tmp, int nx, int ny, 
                           float alpha, float dx, float dt, int steps) {
     float cx = (alpha * dt) / (dx * dx);
 
