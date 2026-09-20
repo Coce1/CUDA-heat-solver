@@ -40,7 +40,7 @@ void solveHeatGPUNaive(float* d_u, float* d_u_tmp, int nx,
     // Time-stepping loop on the Host (CPU)
     for (int t = 0; t < steps; ++t) {
         // Launch kernel
-        heatNaive1DKernel<<<numBlocks, threadsPerBlock>>>(d_u, d_u_tmp, nx, cx);
+        heatNaive<<<numBlocks, threadsPerBlock>>>(d_u, d_u_tmp, nx, cx);
         
         // Pointer swap (Double Buffering)
         float* temp = d_u;
