@@ -52,7 +52,7 @@ void solveHeatGPUSharedMatrix(int num_points, const int* d_row_ptr, const int* d
     float cx = (alpha * dt) / (dx * dx);
 
     // Configuration d'exécution : 1 BLOC par point physique (par ligne de la matrice)
-    int threadsPerBlock = 32; // Une équipe de 32 threads (un Warp)
+    int threadsPerBlock = 32; 
     int numBlocks = num_points; 
     
     // Allocation dynamique du cache partagé (32 floats par bloc)
