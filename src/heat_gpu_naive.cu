@@ -28,29 +28,6 @@ __global__ void heatNaive(int num_points,const int* row_ptr, const int* col_idx,
     }
 }
 
-void solveHeatGPUNaive(float* d_u, float* d_u_tmp, int nx, 
-                         float alpha, float dx, float dt, int steps) {
-    
-    float cx = (alpha * dt) / (dx * dx);
-
-    // 1D execution configuration
-    int threadsPerBlock = 256;
-    int numBlocks = (nx + threadsPerBlock - 1) / threadsPerBlock;
-
-    // Time-stepping loop on the Host (CPU)
-    for (int t = 0; t < steps; ++t) {
-        // Launch kernel
-        heatNaive<<<numBlocks, threadsPerBlock>>>(d_u, d_u_tmp, nx, cx);
-        
-        // Pointer swap (Double Buffering)
-        float* temp = d_u;
-        d_u = d_u_tmp;
-        d_u_tmp = temp;
-    }
-    
-    // Wait for the GPU to finish all time steps
-    cudaDeviceSynchronize();
-}
 
 void solveHeatGPUNaiveMatrix(int num_points, const int* d_row_ptr, const int* d_col_idx, 
                              const float* d_val, float* d_u, float* d_u_tmp, 
