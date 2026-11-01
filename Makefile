@@ -1,53 +1,48 @@
 # Compilateur CUDA
-NVCC = nvcc
+NVCC ?= nvcc
 
-# Options de compilation
-NVCC_FLAGS = -O3 -std=c++14 -I./include
+# Architecture GPU : sm_75 = T4. Surcharger : make ARCH=sm_86  (RTX 30xx), sm_89, sm_90...
+# -arch=sm_XX embarque aussi le PTX : un GPU plus récent peut recompiler à la volée.
+ARCH ?= sm_75
 
-# Dossiers du projet
+NVCC_FLAGS = -O3 -std=c++14 -arch=$(ARCH) -lineinfo -I./include
+
 SRC_DIR = src
 INC_DIR = include
 OBJ_DIR = obj
 BIN_DIR = bin
 
-# Nom de l'exécutable final
 TARGET = $(BIN_DIR)/heat_solver
 
-# Fichiers sources basés sur ton arborescence
-SRCS_CU = $(SRC_DIR)/benchmark.cu $(SRC_DIR)/heat_gpu_naive.cu $(SRC_DIR)/heat_gpu_shared.cu $(SRC_DIR)/heat_gpu_ellpack.cu
+SRCS_CU  = $(SRC_DIR)/benchmark.cu $(SRC_DIR)/heat_gpu_naive.cu $(SRC_DIR)/heat_gpu_ellpack.cu \
+           $(SRC_DIR)/heat_gpu_stencil.cu $(SRC_DIR)/heat_gpu_shared.cu
 SRCS_CPP = $(SRC_DIR)/heat_cpu.cpp
 
-# Fichiers objets correspondants
-OBJS_CU = $(patsubst $(SRC_DIR)/%.cu, $(OBJ_DIR)/%.o, $(SRCS_CU))
+OBJS_CU  = $(patsubst $(SRC_DIR)/%.cu,  $(OBJ_DIR)/%.o, $(SRCS_CU))
 OBJS_CPP = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SRCS_CPP))
-OBJS = $(OBJS_CU) $(OBJS_CPP)
+OBJS     = $(OBJS_CU) $(OBJS_CPP)
 
-# Règle par défaut
-all: directories $(TARGET)
+# Tout header modifié => recompilation de tous les objets
+HEADERS = $(wildcard $(INC_DIR)/*.cuh)
 
-# Création des dossiers
-directories:
-	@mkdir -p $(OBJ_DIR)
-	@mkdir -p $(BIN_DIR)
+all: $(TARGET)
 
-# Édition de liens (Création de l'exécutable)
-$(TARGET): $(OBJS)
-	$(NVCC) $(NVCC_FLAGS) -o $@ $^
-	@echo "Compilation réussie ! L'exécutable est dans $(TARGET)"
+$(TARGET): $(OBJS) | $(BIN_DIR)
+	$(NVCC) $(NVCC_FLAGS) $^ -o $@
+	@echo "Compilation réussie : $(TARGET)"
 
-# Règles de compilation pour les fichiers .cu
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cu
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cu $(HEADERS) | $(OBJ_DIR)
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
-# Règles de compilation pour les fichiers .cpp
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(HEADERS) | $(OBJ_DIR)
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
-# Nettoyage
+$(OBJ_DIR) $(BIN_DIR):
+	mkdir -p $@
+
 clean:
 	rm -rf $(OBJ_DIR) $(BIN_DIR)
-	@echo "Fichiers objets et exécutable supprimés."
 
 rebuild: clean all
 
-.PHONY: all directories clean rebuild
+.PHONY: all clean rebuild
