@@ -1,77 +1,75 @@
 #include "../include/heat_solver.cuh"
-#include <cuda_runtime.h>
-#include <iostream>
+#include "../include/cuda_utils.cuh"
 
-#define BLOCK_DIM_X 16
-#define BLOCK_DIM_Y 16
+#include <utility>
 
-__global__ void heatShared(const int* row_ptr, const int* col_idx, const float* val, 
-                                       const float* u_n, float* u_next, float cx) {
-    
-    // NOUVELLE LOGIQUE : 1 Bloc de threads s'occupe d'UNE SEULE ligne entière
-    int row = blockIdx.x; 
-    int tid = threadIdx.x;
+constexpr int TILE_X = 32;
+constexpr int TILE_Y = 8;
 
-    // Allocation de la mémoire partagée pour la réduction
-    extern __shared__ float s_partial_sums[];
-
-    float local_sum = 0.0f;
-    int row_start = row_ptr[row];
-    int row_end   = row_ptr[row + 1];
-
-    // 1. Les threads du bloc se partagent le travail de la ligne
-    // Si la ligne a 5 éléments et le bloc a 32 threads, seuls les 5 premiers travaillent.
-    for (int i = row_start + tid; i < row_end; i += blockDim.x) {
-        local_sum += val[i] * u_n[col_idx[i]];
-    }
-    
-    // Dépôt dans le cache partagé
-    s_partial_sums[tid] = local_sum;
-    __syncthreads();
-
-    // 2. Arbre de réduction en mémoire partagée (Évite les conflits de banque)
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            s_partial_sums[tid] += s_partial_sums[tid + stride];
-        }
-        __syncthreads();
-    }
-
-    // 3. Le premier thread (le chef d'équipe) écrit le résultat physique final
-    if (tid == 0) {
-        u_next[row] = u_n[row] + cx * s_partial_sums[0];
-    }
+__device__ __forceinline__ float loadOrZero(const float* __restrict__ u, int nx, int ny,
+                                            int gx, int gy) {
+    return (gx >= 0 && gx < nx && gy >= 0 && gy < ny)
+               ? u[static_cast<size_t>(gy) * nx + gx]
+               : 0.0f;
 }
 
+// Tuile (TILE_Y+2) x (TILE_X+2) en shared memory : chaque valeur de u est lue UNE fois
+// depuis la mémoire globale, puis réutilisée 5 fois (centre + 4 voisins) depuis la shared.
+// Le stencil 5 points n'utilise pas les coins du halo : on ne les charge pas.
+// Chaque thread charge son propre centre ; seuls les threads de bord de tuile
+// chargent en plus un point de halo -> pas de division/modulo, pas de boucle.
+// Gain attendu faible sur GPU récent (le L1/L2 absorbe déjà la réutilisation) :
+// cette version sert à le mesurer, pas à le supposer.
+__global__ void heatStencilSharedKernel(const float* __restrict__ u,
+                                        float* __restrict__ u_next,
+                                        int nx, int ny, float cx) {
 
-void solveHeatGPUSharedMatrix(int num_points, const int* d_row_ptr, const int* d_col_idx, 
-                              const float* d_val, float* d_u, float* d_u_tmp, 
-                              float alpha, float dx, float dt, int steps) {
-    
-    // Calcul de la constante thermique
-    float cx = (alpha * dt) / (dx * dx);
+    __shared__ float tile[TILE_Y + 2][TILE_X + 2];
 
-    // Configuration d'exécution : 1 BLOC par point physique (par ligne de la matrice)
-    int threadsPerBlock = 32; 
-    int numBlocks = num_points; 
-    
-    // Allocation dynamique du cache partagé (32 floats par bloc)
-    size_t shared_mem_size = threadsPerBlock * sizeof(float);
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+    const int x = blockIdx.x * TILE_X + tx;
+    const int y = blockIdx.y * TILE_Y + ty;
 
-    // Boucle temporelle sur le Host (CPU)
-    for (int t = 0; t < steps; ++t) {
-        
-        // Lancement du kernel avec le 3ème argument d'exécution (shared memory)
-        heatShared<<<numBlocks, threadsPerBlock, shared_mem_size>>>(d_row_ptr, 
-                                                                                d_col_idx, d_val, 
-                                                                                d_u, d_u_tmp, cx);
+    tile[ty + 1][tx + 1] = loadOrZero(u, nx, ny, x, y);
+    if (ty == 0)          tile[0][tx + 1]          = loadOrZero(u, nx, ny, x, y - 1);
+    if (ty == TILE_Y - 1) tile[TILE_Y + 1][tx + 1] = loadOrZero(u, nx, ny, x, y + 1);
+    if (tx == 0)          tile[ty + 1][0]          = loadOrZero(u, nx, ny, x - 1, y);
+    if (tx == TILE_X - 1) tile[ty + 1][TILE_X + 1] = loadOrZero(u, nx, ny, x + 1, y);
 
-        // Échange des pointeurs (Double Buffering)
-        float* temp = d_u;
-        d_u = d_u_tmp;
-        d_u_tmp = temp;
+    // Barrière OBLIGATOIRE avant toute lecture des voisins écrits par d'autres threads.
+    // Elle est placée avant le return de sortie de grille : tous les threads du bloc
+    // l'atteignent (une barrière dans une branche divergente = comportement indéfini).
+    __syncthreads();
+
+    if (x >= nx || y >= ny) return;
+
+    const size_t i = static_cast<size_t>(y) * nx + x;
+    const float c = tile[ty + 1][tx + 1];
+
+    if (x == 0 || y == 0 || x == nx - 1 || y == ny - 1) { // Dirichlet
+        u_next[i] = c;
+        return;
     }
 
-    // Attente de la fin de tous les pas de temps
-    cudaDeviceSynchronize();
+    // Lecture shared : threads consécutifs -> mots consécutifs -> aucun conflit de banque.
+    u_next[i] = c + cx * (tile[ty + 1][tx] + tile[ty + 1][tx + 2] +
+                          tile[ty][tx + 1] + tile[ty + 2][tx + 1] - 4.0f * c);
+}
+
+float* solveHeatGPUSharedStencil(int nx, int ny, float* d_u, float* d_u_tmp,
+                                 float alpha, float dx, float dt, int steps) {
+
+    const float cx = heatCoefficient(alpha, dx, dt);
+    const dim3 block(TILE_X, TILE_Y);
+    const dim3 grid((nx + TILE_X - 1) / TILE_X, (ny + TILE_Y - 1) / TILE_Y);
+
+    for (int t = 0; t < steps; ++t) {
+        heatStencilSharedKernel<<<grid, block>>>(d_u, d_u_tmp, nx, ny, cx);
+        CUDA_CHECK_KERNEL();
+        std::swap(d_u, d_u_tmp);
+    }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+    return d_u;
 }
