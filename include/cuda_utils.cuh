@@ -18,9 +18,11 @@
     do {                                                                       \
         cudaError_t cuda_check_err_ = (call);                                  \
         if (cuda_check_err_ != cudaSuccess) {                                  \
+            std::fflush(stdout);                                               \
             std::fprintf(stderr, "[CUDA ERROR] %s:%d : %s (%s)\n",             \
                          __FILE__, __LINE__,                                   \
                          cudaGetErrorString(cuda_check_err_), #call);          \
+            std::fflush(stderr);                                               \
             std::exit(EXIT_FAILURE);                                           \
         }                                                                      \
     } while (0)
