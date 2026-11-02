@@ -11,7 +11,7 @@ SRC_DIR = src
 INC_DIR = include
 OBJ_DIR = obj
 BIN_DIR = bin
-
+sed -i 's/^    /\t/' Makefile
 TARGET = $(BIN_DIR)/heat_solver
 
 SRCS_CU  = $(SRC_DIR)/benchmark.cu $(SRC_DIR)/heat_gpu_naive.cu $(SRC_DIR)/heat_gpu_ellpack.cu \
