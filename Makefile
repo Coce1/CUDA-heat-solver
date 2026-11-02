@@ -1,8 +1,9 @@
-# Compilateur CUDA
+# Les commandes commencent par '>' au lieu d'une tabulation (robuste au copier-coller)
+.RECIPEPREFIX = >
+
 NVCC ?= nvcc
 
-# Architecture GPU : sm_75 = T4. Surcharger : make ARCH=sm_86  (RTX 30xx), sm_89, sm_90...
-# -arch=sm_XX embarque aussi le PTX : un GPU plus récent peut recompiler à la volée.
+# Architecture GPU : sm_75 = T4. Surcharger : make ARCH=sm_86
 ARCH ?= sm_75
 
 NVCC_FLAGS = -O3 -std=c++14 -arch=$(ARCH) -lineinfo -I./include
@@ -11,7 +12,7 @@ SRC_DIR = src
 INC_DIR = include
 OBJ_DIR = obj
 BIN_DIR = bin
-sed -i 's/^    /\t/' Makefile
+
 TARGET = $(BIN_DIR)/heat_solver
 
 SRCS_CU  = $(SRC_DIR)/benchmark.cu $(SRC_DIR)/heat_gpu_naive.cu $(SRC_DIR)/heat_gpu_ellpack.cu \
@@ -28,20 +29,20 @@ HEADERS = $(wildcard $(INC_DIR)/*.cuh)
 all: $(TARGET)
 
 $(TARGET): $(OBJS) | $(BIN_DIR)
-	$(NVCC) $(NVCC_FLAGS) $^ -o $@
-	@echo "Compilation réussie : $(TARGET)"
+> $(NVCC) $(NVCC_FLAGS) $^ -o $@
+> @echo "Compilation réussie : $(TARGET)"
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cu $(HEADERS) | $(OBJ_DIR)
-	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
+> $(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(HEADERS) | $(OBJ_DIR)
-	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
+> $(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
 $(OBJ_DIR) $(BIN_DIR):
-	mkdir -p $@
+> mkdir -p $@
 
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+> rm -rf $(OBJ_DIR) $(BIN_DIR)
 
 rebuild: clean all
 
