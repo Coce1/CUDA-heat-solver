@@ -2,6 +2,11 @@
 # Ce fichier .gitignore a été automatiquement créé par Microsoft(R) Visual Studio.
 ################################################################################
 
+git add -A
+git status          # vérifier qu'aucun binaire ni obj/ n'apparaît
+git commit -m "Rewrite: CUDA_CHECK, RAII, warm-up benchmark, validation"
+git push
+
 # Fichiers de cache Visual Studio
 .vs/
 *.db
