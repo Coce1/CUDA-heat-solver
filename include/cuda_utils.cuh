@@ -12,8 +12,7 @@
 #include <vector>
 
 // Vérifie le code retour de tout appel du runtime CUDA et stoppe avec fichier/ligne.
-// Sans cela, une allocation ratée ou un lancement invalide passe inaperçu et
-// l'on chronomètre des kernels qui n'ont jamais tourné.
+// fflush(stdout) : les chiffres déjà affichés ne sont pas perdus quand une erreur survient.
 #define CUDA_CHECK(call)                                                       \
     do {                                                                       \
         cudaError_t cuda_check_err_ = (call);                                  \
@@ -29,7 +28,7 @@
 
 // À placer juste après un lancement <<<...>>> : détecte les erreurs de configuration
 // (grille/bloc invalides, trop de shared memory...). Les erreurs d'exécution
-// asynchrones, elles, ressortent au prochain cudaDeviceSynchronize()/cudaMemcpy().
+// asynchrones ressortent au prochain cudaDeviceSynchronize()/cudaMemcpy().
 #define CUDA_CHECK_KERNEL() CUDA_CHECK(cudaGetLastError())
 
 // Buffer GPU RAII : cudaFree automatique (même en cas de sortie anticipée),
@@ -94,6 +93,7 @@ public:
 private:
     void checkCount(std::size_t count) const {
         if (count > size_) {
+            std::fflush(stdout);
             std::fprintf(stderr, "[DeviceBuffer] transfert de %zu éléments > capacité %zu\n",
                          count, size_);
             std::exit(EXIT_FAILURE);
