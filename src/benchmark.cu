@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include "../include/cuda_utils.cuh"
@@ -60,7 +61,7 @@ static void generate2DLaplacianELLPACK(int nx, int ny, int max_nnz,
                 val[3 * num_points + row] = 1.0f;  col_idx[3 * num_points + row] = y * nx + (x + 1);
                 val[4 * num_points + row] = 1.0f;  col_idx[4 * num_points + row] = (y + 1) * nx + x;
             } else {
-                // Bord : on pointe sur soi-même avec un poids nul (padding valide, jamais hors bornes)
+                // Bord : on pointe sur soi-même avec un poids nul (jamais hors bornes)
                 for (int n = 0; n < max_nnz; ++n) {
                     col_idx[n * num_points + row] = static_cast<int>(row);
                     val[n * num_points + row] = 0.0f;
@@ -70,17 +71,29 @@ static void generate2DLaplacianELLPACK(int nx, int ny, int max_nnz,
     }
 }
 
+struct Result {
+    std::string name;
+    double ms = 0.0;
+    double speedup = 0.0;
+    double mpts = 0.0; // millions de mises à jour de points par seconde
+    double diff = 0.0;
+    bool ok = false;
+};
+
 // ---------------------------------------------------------------------------
-// Chronomètre + validation d'une variante GPU.
+// Chronomètre + validation d'une variante GPU. Le résultat est TOUJOURS affiché,
+// la validation ne fait qu'ajouter un statut OK/ÉCHEC.
 // `run(u, tmp)` doit retourner le pointeur du buffer contenant le résultat.
 // ---------------------------------------------------------------------------
 template <typename Run>
-static void evaluate(const char* name, Run&& run,
-                     DeviceBuffer<float>& d_u, DeviceBuffer<float>& d_tmp,
-                     const std::vector<float>& h_u0, const std::vector<float>& h_ref,
-                     double ms_cpu) {
+static Result evaluate(const char* name, Run&& run,
+                       DeviceBuffer<float>& d_u, DeviceBuffer<float>& d_tmp,
+                       const std::vector<float>& h_u0, const std::vector<float>& h_ref,
+                       double ms_cpu, double point_updates) {
 
-    // Réinitialisation hors zone chronométrée (les deux buffers = état initial)
+    std::printf("  [en cours] %s ...\n", name);
+
+    // Réinitialisation hors zone chronométrée
     auto prepare = [&]() {
         d_u.upload(h_u0);
         d_tmp.upload(h_u0);
@@ -89,19 +102,30 @@ static void evaluate(const char* name, Run&& run,
     float* res = nullptr;
     const float ms = benchmarkMs(prepare, [&]() { res = run(d_u.get(), d_tmp.get()); }, 2, 5);
 
-    // Exécution de validation : on lit le buffer RETOURNÉ (pas d_u au hasard)
+    // Exécution de validation : on lit le buffer RETOURNÉ par le solveur
     prepare();
     res = run(d_u.get(), d_tmp.get());
     std::vector<float> h_gpu(h_u0.size());
     CUDA_CHECK(cudaMemcpy(h_gpu.data(), res, h_gpu.size() * sizeof(float), cudaMemcpyDeviceToHost));
 
-    const double diff = maxAbsDiff(h_gpu, h_ref);
-    const bool ok = diff < 1e-2; // l'ordre de sommation et les FMA diffèrent du CPU
-    std::printf("%-36s : %9.3f ms | x%7.1f vs CPU | max|diff| = %.3e | %s\n",
-                name, ms, ms_cpu / ms, diff, ok ? "OK" : "ÉCHEC");
+    Result r;
+    r.name = name;
+    r.ms = ms;
+    r.speedup = ms_cpu / ms;
+    r.mpts = point_updates / (ms / 1000.0) / 1e6;
+    r.diff = maxAbsDiff(h_gpu, h_ref);
+    r.ok = r.diff < 1e-2;
+
+    std::printf("    -> %.3f ms | x%.1f vs CPU | %.0f Mpts/s | max|diff| = %.3e | %s\n",
+                r.ms, r.speedup, r.mpts, r.diff, r.ok ? "OK" : "ÉCHEC");
+    return r;
 }
 
 int main() {
+    // Sortie non bufferisée : tout ce qui est affiché reste visible même en cas de crash.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    const auto t_program = std::chrono::steady_clock::now();
+
     // --- Paramètres physiques et de simulation ---
     const int nx = 1024, ny = 1024;
     const int num_points = nx * ny;
@@ -111,12 +135,15 @@ int main() {
     const float alpha = 0.01f;
     const float dx = 0.01f;
     const float dt = 0.002f;
+    const double point_updates = static_cast<double>(num_points) * steps;
 
     std::printf("=== SpMV Heat Equation Benchmark ===\n");
     printDeviceInfo();
-    std::printf("Grille : %dx%d | Pas de temps : %d\n\n", nx, ny, steps);
+    std::printf("Grille : %dx%d | Pas de temps : %d | cx = %.3f\n\n", nx, ny, steps,
+                (alpha * dt) / (dx * dx));
 
     // --- Matrices (hôte) ---
+    std::printf("Génération des matrices CSR et ELLPACK...\n");
     std::vector<int> h_row_ptr, h_col_idx, h_col_idx_ell;
     std::vector<float> h_val, h_val_ell;
     generate2DLaplacianCSR(nx, ny, h_row_ptr, h_col_idx, h_val);
@@ -127,18 +154,19 @@ int main() {
     std::vector<float> h_u0(num_points, 20.0f);
     h_u0[(ny / 2) * nx + (nx / 2)] = 1000.0f;
 
-    // --- Référence CPU (une seule exécution, elle sert aussi de vérité terrain) ---
+    // --- Référence CPU (une exécution : sert aussi de vérité terrain) ---
     std::vector<float> cpu_u = h_u0, cpu_tmp = h_u0;
-    std::printf("[CPU] référence séquentielle CSR...\n");
+    std::printf("[CPU] référence séquentielle CSR (peut durer plusieurs secondes)...\n");
     const auto t0 = std::chrono::steady_clock::now();
     const float* cpu_res = solveHeatCPU(num_points, h_row_ptr.data(), h_col_idx.data(), h_val.data(),
                                         cpu_u.data(), cpu_tmp.data(), alpha, dx, dt, steps);
     const double ms_cpu =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     const std::vector<float> h_ref(cpu_res, cpu_res + num_points);
-    std::printf("CPU CSR séquentiel                   : %9.3f ms\n\n", ms_cpu);
+    std::printf("  -> CPU CSR séquentiel : %.3f ms | %.0f Mpts/s\n\n", ms_cpu,
+                point_updates / (ms_cpu / 1000.0) / 1e6);
 
-    // --- Mémoire GPU : matrices envoyées UNE fois (RAII : pas de cudaFree manuel) ---
+    // --- Mémoire GPU : matrices envoyées UNE fois (RAII) ---
     DeviceBuffer<int> d_row_ptr(h_row_ptr.size()), d_col_idx(h_col_idx.size());
     DeviceBuffer<float> d_val(h_val.size());
     DeviceBuffer<int> d_col_idx_ell(h_col_idx_ell.size());
@@ -151,33 +179,51 @@ int main() {
     d_col_idx_ell.upload(h_col_idx_ell);
     d_val_ell.upload(h_val_ell);
 
-    // --- Variantes GPU (warm-up + moyenne sur 5 exécutions chacune) ---
-    evaluate("GPU CSR naïf (1 thread/ligne)",
+    // --- Variantes GPU (2 warm-up + moyenne sur 5 exécutions chacune) ---
+    std::printf("[GPU] mesures (2 warm-up + 5 exécutions chronométrées par variante)\n");
+    std::vector<Result> results;
+
+    results.push_back(evaluate("GPU CSR naïf (1 thread/ligne)",
              [&](float* u, float* t) {
                  return solveHeatGPUNaive(num_points, d_row_ptr.get(), d_col_idx.get(), d_val.get(),
                                           u, t, alpha, dx, dt, steps);
              },
-             d_u, d_tmp, h_u0, h_ref, ms_cpu);
+             d_u, d_tmp, h_u0, h_ref, ms_cpu, point_updates));
 
-    evaluate("GPU ELLPACK colonne-major",
+    results.push_back(evaluate("GPU ELLPACK colonne-major",
              [&](float* u, float* t) {
                  return solveHeatGPUELLPACK(num_points, max_nnz, d_col_idx_ell.get(), d_val_ell.get(),
                                             u, t, alpha, dx, dt, steps);
              },
-             d_u, d_tmp, h_u0, h_ref, ms_cpu);
+             d_u, d_tmp, h_u0, h_ref, ms_cpu, point_updates));
 
-    evaluate("GPU stencil global (sans matrice)",
+    results.push_back(evaluate("GPU stencil global (sans matrice)",
              [&](float* u, float* t) {
                  return solveHeatGPUStencil(nx, ny, u, t, alpha, dx, dt, steps);
              },
-             d_u, d_tmp, h_u0, h_ref, ms_cpu);
+             d_u, d_tmp, h_u0, h_ref, ms_cpu, point_updates));
 
-    evaluate("GPU stencil shared (tuile + halo)",
+    results.push_back(evaluate("GPU stencil shared (tuile + halo)",
              [&](float* u, float* t) {
                  return solveHeatGPUSharedStencil(nx, ny, u, t, alpha, dx, dt, steps);
              },
-             d_u, d_tmp, h_u0, h_ref, ms_cpu);
+             d_u, d_tmp, h_u0, h_ref, ms_cpu, point_updates));
 
-    std::printf("\nBenchmark terminé.\n");
+    // --- Récapitulatif ---
+    std::printf("\n=== RÉCAPITULATIF HEAT (%dx%d, %d pas) ===\n", nx, ny, steps);
+    std::printf("%-36s | %12s | %10s | %10s | %11s | %s\n",
+                "Variante", "Temps (ms)", "Speedup", "Mpts/s", "max|diff|", "Statut");
+    std::printf("-------------------------------------+--------------+------------+------------+-------------+-------\n");
+    std::printf("%-36s | %12.3f | %9.1fx | %10.0f | %11s | %s\n", "CPU CSR séquentiel", ms_cpu, 1.0,
+                point_updates / (ms_cpu / 1000.0) / 1e6, "(référence)", "-");
+    for (const Result& r : results) {
+        std::printf("%-36s | %12.3f | %9.1fx | %10.0f | %11.2e | %s\n",
+                    r.name.c_str(), r.ms, r.speedup, r.mpts, r.diff, r.ok ? "OK" : "ÉCHEC");
+    }
+
+    const double total_s =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t_program).count();
+    std::printf("\nTemps total d'exécution du programme : %.2f s\n", total_s);
+    std::printf("Benchmark terminé.\n");
     return 0;
 }
